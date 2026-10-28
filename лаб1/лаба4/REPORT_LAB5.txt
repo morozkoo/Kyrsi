@@ -1,0 +1,270 @@
+МИНИСТЕРСТВО ОБРАЗОВАНИЯ РЕСПУБЛИКИ БЕЛАРУСЬ
+БЕЛОРУССКИЙ ГОСУДАРСТВЕННЫЙ УНИВЕРСИТЕТ ИНФОРМАТИКИ
+И РАДИОЭЛЕКТРОНИКИ
+
+Кафедра: ______________________________________________
+Дисциплина: ___________________________________________
+
+
+ОТЧЕТ
+по лабораторной работе № 5
+
+Тема: Интеграция React-приложения с REST API
+Проект: Клиентская часть конвертера валют
+
+
+Выполнил(а): студент(ка) группы _______________________
+Фамилия И.О.: _________________________________________
+Проверил(а): __________________________________________
+
+
+Минск 2026
+
+
+1. ЦЕЛЬ РАБОТЫ
+
+Освоить отправку HTTP-запросов из React-приложения к REST API, обработку асинхронных состояний «загрузка», «ошибка» и «успех», а также обновление интерфейса на основе серверных данных. Реализовать CRUD-операции с оптимистичным обновлением и откатом состояния при ошибке для интеграции клиентской части проекта конвертера валют с сервером лабораторных работ № 1–3.
+
+2. СХЕМА ВЗАИМОДЕЙСТВИЯ REACT-ПРИЛОЖЕНИЯ С СЕРВЕРОМ
+
+Пользователь взаимодействует с React-интерфейсом, запущенным Vite на http://localhost:5173. Основной компонент src/AppApi.jsx управляет состоянием списка валют, формой, статусом загрузки и сообщениями об ошибках. Для HTTP-операций компонент вызывает функции из src/api.js.
+
+Файл api.js формирует запрос Fetch API к серверу http://localhost:3001. Для JSON-запросов он устанавливает Content-Type: application/json. Для защищенных операций к запросу добавляется Authorization: Bearer <JWT>. Сервер Express разрешает запросы браузера через CORS middleware, проверяет JWT и роль пользователя, передает работу контроллеру валют. Контроллер обращается к PostgreSQL через Sequelize.
+
+Схема обмена:
+
+Пользователь
+    -> React-компонент AppApi.jsx
+    -> функции src/api.js
+    -> Fetch API и HTTP-запрос
+    -> Express REST API на localhost:3001
+    -> CORS и middleware JWT/RBAC для защищенных операций
+    -> currencyController
+    -> Sequelize ORM
+    -> PostgreSQL
+
+Ответ сервера проходит в обратном направлении. React обновляет интерфейс по ответу. Для POST, PUT и DELETE интерфейс сначала оптимистично изменяет список, а при ошибке восстанавливает прежнее состояние.
+
+Получение списка валют выполняется публичным запросом GET /currencies. Создание, редактирование, удаление валют и обновление курсов требуют входа учетной записью с ролью admin. JWT автоматически прикладывается к таким запросам. Пользователь с ролью user может просматривать список, но не изменять его.
+
+3. ЛИСТИНГ ФАЙЛА API.JS
+
+Файл лаба4/src/api.js:
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+
+async function request(path, { method = 'GET', token, body, signal } = {}) {
+  const headers = new Headers()
+  if (body !== undefined) headers.set('Content-Type', 'application/json')
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+
+  const response = await fetch(`${API_URL}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
+  })
+
+  if (response.status === 204) return null
+
+  const result = await response.json().catch(() => null)
+  if (!response.ok) {
+    const error = new Error(result?.error || `Ошибка запроса: ${response.status}`)
+    error.status = response.status
+    throw error
+  }
+
+  return result
+}
+
+export const fetchCurrencies = ({ signal } = {}) => request('/currencies', { signal })
+export const register = (credentials) => request('/auth/register', { method: 'POST', body: credentials })
+export const login = (credentials) => request('/auth/login', { method: 'POST', body: credentials })
+export const fetchProfile = (token, { signal } = {}) => request('/profile', { token, signal })
+export const addCurrency = (currency, token) => request('/currencies', { method: 'POST', token, body: {
+  id: currency.code,
+  name: currency.name,
+  symbol: currency.symbol,
+  rateToRub: currency.rateToRub,
+} })
+export const updateCurrency = (id, currency, token) => request(`/currencies/${encodeURIComponent(id)}`, { method: 'PUT', token, body: {
+  name: currency.name,
+  symbol: currency.symbol,
+  rateToRub: currency.rateToRub,
+} })
+export const deleteCurrency = (id, token) => request(`/currencies/${encodeURIComponent(id)}`, { method: 'DELETE', token })
+export const refreshCurrencyRates = (token) => request('/currencies/refresh', { method: 'POST', token })
+
+4. КЛЮЧЕВЫЕ ФРАГМЕНТЫ ОСНОВНОГО КОМПОНЕНТА
+
+Основной компонент находится в файле лаба4/src/AppApi.jsx. Ниже приведены фрагменты загрузки данных, отмены запроса, оптимистичных изменений и работы с учетной записью.
+
+4.1. Загрузка списка и обработка ошибок
+
+useEffect(() => {
+  const controller = new AbortController()
+
+  fetchCurrencies({ signal: controller.signal })
+    .then((currencies) => {
+      setItems(currencies.map(toCurrency))
+      setSyncState('saved')
+    })
+    .catch((error) => {
+      if (error.name !== 'AbortError') {
+        setLoadError(error.message)
+        setSyncState('error')
+      }
+    })
+    .finally(() => {
+      if (!controller.signal.aborted) setLoading(false)
+    })
+
+  return () => controller.abort()
+}, [retryCount])
+
+При состоянии loading компонент отображает индикатор загрузки. Если запрос завершился обычной ошибкой, показываются ее текст и кнопка повторной загрузки. AbortError не выводится пользователю как ошибка.
+
+4.2. Оптимистичное добавление
+
+const temporaryItem = { ...nextItem, pending: true }
+setItems((currentItems) => [...currentItems, temporaryItem])
+resetForm()
+
+try {
+  const savedItem = toCurrency(await addCurrency(nextItem, auth.token))
+  setItems((currentItems) => currentItems.map((item) => (
+    item.code === code ? savedItem : item
+  )))
+  markSaved('Валюта добавлена на сервере.')
+} catch (error) {
+  setItems((currentItems) => currentItems.filter((item) => item.code !== code))
+  setSyncState('error')
+  setNotice(`Добавление отменено: ${error.message}`)
+}
+
+4.3. Оптимистичное редактирование
+
+const previousItem = items.find((item) => item.code === editingCode)
+setItems((currentItems) => currentItems.map((item) => (
+  item.code === editingCode ? nextItem : item
+)))
+
+try {
+  const savedItem = toCurrency(await updateCurrency(editingCode, nextItem, auth.token))
+  setItems((currentItems) => currentItems.map((item) => (
+    item.code === savedItem.code ? savedItem : item
+  )))
+} catch (error) {
+  setItems((currentItems) => currentItems.map((item) => (
+    item.code === editingCode ? previousItem : item
+  )))
+  setSyncState('error')
+  setNotice(`Изменение отменено: ${error.message}`)
+}
+
+4.4. Оптимистичное удаление
+
+const index = items.findIndex((item) => item.code === code)
+const removedItem = items[index]
+setItems((currentItems) => currentItems.filter((item) => item.code !== code))
+
+try {
+  await deleteCurrency(code, auth.token)
+  markSaved('Валюта удалена.')
+} catch (error) {
+  setItems((currentItems) => {
+    const restoredItems = [...currentItems]
+    restoredItems.splice(Math.min(index, restoredItems.length), 0, removedItem)
+    return restoredItems
+  })
+  setSyncState('error')
+  setNotice(`Удаление отменено: ${error.message}`)
+}
+
+4.5. Вход и сохранение JWT
+
+if (authMode === 'register') await register(authForm)
+const result = await login(authForm)
+const user = await fetchProfile(result.token)
+localStorage.setItem(TOKEN_KEY, result.token)
+setAuth({ token: result.token, user })
+setAuthForm({ email: '', password: '' })
+
+5. СКРИНШОТЫ
+
+Скриншот 1. Процесс загрузки данных: состояние со спиннером до получения ответа GET /currencies.
+[ВСТАВИТЬ РЕАЛЬНЫЙ СКРИНШОТ 1]
+
+Скриншот 2. Список валют после успешного получения ответа от сервера.
+[ВСТАВИТЬ РЕАЛЬНЫЙ СКРИНШОТ 2]
+
+Скриншот 3. Добавление новой тестовой валюты: оптимистичная строка во время отправки запроса.
+[ВСТАВИТЬ РЕАЛЬНЫЙ СКРИНШОТ 3]
+
+Скриншот 4. Добавление новой тестовой валюты: строка после успешного ответа сервера.
+[ВСТАВИТЬ РЕАЛЬНЫЙ СКРИНШОТ 4]
+
+Скриншот 5. Удаление тестовой валюты и обновленный список.
+[ВСТАВИТЬ РЕАЛЬНЫЙ СКРИНШОТ 5]
+
+Скриншот 6. Ошибка загрузки при недоступном сервере и кнопка повторного запроса.
+[ВСТАВИТЬ РЕАЛЬНЫЙ СКРИНШОТ 6]
+
+Скриншот 7. Дополнительное улучшение AbortController: отмена запроса списка при размонтировании/повторной загрузке либо отображение отмены в инструментах разработчика.
+[ВСТАВИТЬ РЕАЛЬНЫЙ СКРИНШОТ 7]
+
+Использовать тестовые данные. Не показывать на скриншотах секрет JWT_SECRET, пароль, полный JWT или учетные данные PostgreSQL. Для демонстрации можно войти как admin@gmail.com с локальным учебным паролем, после демонстрации выйти из учетной записи.
+
+6. ОТВЕТЫ НА КОНТРОЛЬНЫЕ ВОПРОСЫ
+
+1. Что такое клиент-серверное взаимодействие?
+Это модель, в которой клиент формирует запрос, сервер обрабатывает его и возвращает ответ. В этой работе React является клиентом, Express — сервером, PostgreSQL — хранилищем данных.
+
+2. Что такое REST API?
+Это интерфейс доступа к ресурсам через HTTP. Ресурсы и операции над ними представлены URL и стандартными HTTP-методами.
+
+3. Для чего используются GET, POST, PUT и DELETE?
+GET получает данные, POST создает ресурс, PUT заменяет или обновляет ресурс, DELETE удаляет ресурс. Клиент использует эти методы для списка валют.
+
+4. Что такое Fetch API?
+Встроенный в браузеры интерфейс JavaScript для выполнения HTTP-запросов. Он возвращает Promise с объектом Response.
+
+5. Для чего нужны async и await?
+Они позволяют записывать асинхронную работу с Promise в последовательной форме. Ошибки ожидания обрабатываются конструкцией try/catch.
+
+6. Что означает состояние loading?
+Клиент отправил запрос и еще не получил завершенный ответ. Интерфейс может отображать спиннер и временно блокировать связанные действия.
+
+7. Как следует обрабатывать ошибку HTTP-запроса?
+Проверить response.ok, сформировать сообщение об ошибке, показать его пользователю и дать возможность повторить запрос, если операция допускает повтор.
+
+8. Для чего нужен заголовок Content-Type: application/json?
+Он сообщает серверу, что тело запроса содержит JSON. Сервер может разобрать его и передать данные контроллеру.
+
+9. Что такое HTTP-статус ответа?
+Это числовой результат обработки запроса. Например, 200 означает успешный запрос, 201 — создание ресурса, 401 — отсутствие действительной аутентификации, 403 — недостаток прав, 500 — серверную ошибку.
+
+10. Что такое JWT и зачем он используется здесь?
+JWT — подписанный токен с утверждениями о пользователе. Сервер выдает его после входа, а клиент передает в Bearer-заголовке для авторизованных операций.
+
+11. Где клиент хранит токен в данной работе?
+В localStorage под ключом currency-radar-token. Такой способ удобен для учебной реализации, но токен доступен JavaScript; в реальном приложении нужно учитывать риск XSS и рассмотреть HttpOnly Secure cookie.
+
+12. Как токен передается серверу?
+В HTTP-заголовке Authorization в формате Bearer <token>. API-сервис добавляет этот заголовок, если функция запроса получила токен.
+
+13. Что такое оптимистичное обновление интерфейса?
+Это изменение локального состояния до ответа сервера. Оно делает интерфейс отзывчивее, но требует обработки неуспешного запроса.
+
+14. Как выполняется откат при ошибке?
+При POST удаляется временно добавленная строка; при PUT возвращается сохраненная копия предыдущего элемента; при DELETE удаленный элемент возвращается на прежнюю позицию.
+
+15. Для чего используется AbortController?
+Он позволяет отменить Fetch-запрос. В работе сигнал используется при загрузке валют и запрос отменяется, когда компонент размонтируется или загрузка перезапускается.
+
+16. Что такое CORS и зачем он нужен?
+CORS — механизм браузера для контроля запросов между разными origin. Клиент Vite и сервер Express используют разные порты, поэтому сервер разрешает браузерный origin через CORS middleware.
+
+7. ВЫВОДЫ
+
+В ходе работы React-клиент конвертера валют подключен к собственному REST API. Реализованы получение списка и состояния загрузки/ошибки, регистрация и вход, передача JWT, добавление, редактирование и удаление валют. Для CRUD реализовано оптимистичное обновление с откатом при ошибке. Дополнительным улучшением стала отмена GET-запроса списка с помощью AbortController. Для завершения отчета необходимо вставить реальные скриншоты, обозначенные в разделе 5.
