@@ -10,6 +10,7 @@
     "db:seed": "sequelize-cli db:seed:all",
     "db:seed:demo-users": "sequelize-cli db:seed --seed 20261028000000-demo-users.js",
     "db:seed:byn": "sequelize-cli db:seed --seed 20261028000001-add-byn-currency.js",
+    "db:seed:mongo": "node scripts/seedMongoFromPostgres.js",
     "db:reset": "sequelize-cli db:migrate:undo:all"
   },
   "keywords": [

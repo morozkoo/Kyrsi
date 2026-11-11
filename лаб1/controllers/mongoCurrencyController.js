@@ -80,7 +80,7 @@ exports.update = async (req, res, next) => {
     const currency = await MongoCurrency.findByIdAndUpdate(req.params.id, {
       $set: fields,
       $push: { rateHistory: rateInput({ rateToRub: fields.rateToRub }) }
-    }, { new: true, runValidators: true });
+    }, { returnDocument: 'after', runValidators: true });
     if (!currency) return res.status(404).json({ error: 'Валюта не найдена' });
     res.json(currency);
   } catch (error) { next(error); }
@@ -104,7 +104,7 @@ exports.addRate = async (req, res, next) => {
     const currency = await MongoCurrency.findByIdAndUpdate(req.params.id, {
       $set: { rateToRub: entry.rateToRub },
       $push: { rateHistory: entry }
-    }, { new: true, runValidators: true });
+    }, { returnDocument: 'after', runValidators: true });
     if (!currency) return res.status(404).json({ error: 'Валюта не найдена' });
     res.json(currency);
   } catch (error) { next(error); }
@@ -119,7 +119,7 @@ exports.updateRateNote = async (req, res, next) => {
     const currency = await MongoCurrency.findOneAndUpdate(
       { _id: req.params.id, 'rateHistory._id': req.params.entryId },
       { $set: { 'rateHistory.$.note': req.body.note.trim() } },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
     if (!currency) return res.status(404).json({ error: 'Валюта или запись истории не найдена' });
     res.json(currency);
