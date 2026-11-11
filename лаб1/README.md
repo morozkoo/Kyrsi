@@ -2,6 +2,54 @@
 
 Учебное REST API для приложения конвертации валют и расчёта курсов. Данные хранятся в PostgreSQL через Sequelize.
 
+## Лабораторная работа №6: MongoDB
+
+В ветке `26` добавлена параллельная документная реализация справочника валют через Mongoose. Прежние маршруты `/currencies`, пользователи и вход продолжают работать с PostgreSQL. Новые маршруты `/mongo/currencies` работают с MongoDB; для изменения данных подходит существующий JWT пользователя с ролью `admin`.
+
+Скопируйте `.env.example` в `.env` и заполните `DATABASE_URL`, `JWT_SECRET` и `MONGO_URI`. Для локальной MongoDB можно использовать `mongodb://127.0.0.1:27017/currency_converter`. Для Atlas вставьте выданную им строку `mongodb+srv://...` с именем базы `currency_converter` и учётными данными созданного пользователя. Пароль, URI и JWT-секрет не публикуйте в Git; `.env` исключён из репозитория.
+
+После запуска PostgreSQL и MongoDB выполните из каталога `лаб1`:
+
+```bash
+npm install
+npm run db:migrate
+npm run dev
+```
+
+При отсутствии `MONGO_URI` или недоступной MongoDB сервер продолжит обслуживать PostgreSQL-маршруты, а запросы к `/mongo/currencies` вернут `503`. Если база PostgreSQL уже подготовлена, повторные миграции не нужны.
+
+Документ валюты содержит `code`, `name`, `symbol`, текущий `rateToRub` и вложенный массив `rateHistory`. В каждой записи истории есть собственный ObjectId, курс, источник (`manual` или `cbr`), заметка и время. В PostgreSQL текущий курс лежит в строке таблицы `currencies`; для такой истории обычно потребовалась бы отдельная таблица со связью по коду валюты. В MongoDB история находится внутри документа валюты.
+
+| Метод | Маршрут | Действие |
+| --- | --- | --- |
+| GET | `/mongo/currencies` | Список документов |
+| GET | `/mongo/currencies/:id` | Документ по MongoDB ObjectId |
+| POST | `/mongo/currencies` | Создать валюту и первую запись истории (admin) |
+| PUT | `/mongo/currencies/:id` | Обновить валюту и добавить запись истории (admin) |
+| DELETE | `/mongo/currencies/:id` | Удалить и вернуть удалённый документ (admin) |
+| POST | `/mongo/currencies/:id/history` | Добавить курс в массив и обновить текущий курс (admin) |
+| PATCH | `/mongo/currencies/:id/history/:entryId` | Изменить заметку конкретной вложенной записи (admin) |
+
+Для `POST`, `PUT`, `DELETE` и запросов к истории передайте `Authorization: Bearer <token>`. Токен получается через существующий `POST /auth/login` с данными администратора из PostgreSQL. MongoDB `_id` берите из ответа на создание или GET списка; `entryId` — из элемента `rateHistory`.
+
+Примеры тел запросов для Postman:
+
+```http
+POST /mongo/currencies
+{"code":"USD","name":"Доллар США","symbol":"$","rateToRub":92.5}
+
+PUT /mongo/currencies/<id>
+{"code":"USD","name":"Доллар США","symbol":"$","rateToRub":93.1}
+
+POST /mongo/currencies/<id>/history
+{"rateToRub":94.2,"source":"manual","note":"Проверка нового курса"}
+
+PATCH /mongo/currencies/<id>/history/<entryId>
+{"note":"Курс подтверждён"}
+```
+
+`PATCH` использует позиционный оператор MongoDB `$` для изменения поля внутри выбранного элемента массива. В Atlas Data Explorer или Compass откройте коллекцию `currencies`, чтобы увидеть `rateHistory` внутри документа. Модель находится в `models/mongoCurrency.js`, контроллер — в `controllers/mongoCurrencyController.js`, маршруты — в `routes/mongoCurrencyRoutes.js`.
+
 ## Запуск
 
 ```bash

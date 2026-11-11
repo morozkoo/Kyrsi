@@ -2,10 +2,12 @@ const express = require('express');
 const cors = require('cors');
 const currencyRoutes = require('./routes/currencyRoutes');
 const authRoutes = require('./routes/authRoutes');
+const mongoCurrencyRoutes = require('./routes/mongoCurrencyRoutes');
 const authController = require('./controllers/authController');
 const { authenticateToken } = require('./middleware/auth');
 const { convertCurrency } = require('./controllers/currencyController');
 const sequelize = require('./config/database');
+const { connectMongo } = require('./config/mongo');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -26,6 +28,7 @@ app.get('/', (req, res) => {
 });
 
 app.use('/currencies', currencyRoutes);
+app.use('/mongo/currencies', mongoCurrencyRoutes);
 app.use('/auth', authRoutes);
 app.get('/profile', authenticateToken, authController.profile);
 app.post('/conversions', convertCurrency);
@@ -42,6 +45,8 @@ app.use((error, req, res, next) => {
   console.error(error);
   res.status(500).json({ error: 'Внутренняя ошибка сервера' });
 });
+
+connectMongo();
 
 sequelize.authenticate()
   .then(() => {
