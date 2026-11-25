@@ -18,7 +18,7 @@ export default function CurrencyChat() {
 
   useEffect(() => {
     if (!profile) return
-    const socket = io(apiUrl, { autoConnect: false })
+    const socket = io(apiUrl.startsWith('/') ? undefined : apiUrl, { autoConnect: false })
     socketRef.current = socket
     const append = (entry) => {
       if (entry.code === room) setEntries((old) => [...old.slice(-99), entry])

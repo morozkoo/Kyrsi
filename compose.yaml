@@ -1,0 +1,61 @@
+name: currency-converter
+
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    environment:
+      POSTGRES_USER: currency
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-currency-local}
+      POSTGRES_DB: currency_converter
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  db-init:
+    image: currency-backend:lab8
+    pull_policy: never
+    command: ["sh", "-ec", "npm run db:migrate && npm run db:seed"]
+    environment: &database
+      DATABASE_URL: "postgres://currency:${POSTGRES_PASSWORD:-currency-local}@db:5432/currency_converter"
+      DATABASE_SSL: "false"
+      DB_SEED_STORAGE: sequelize
+    depends_on:
+      db:
+        condition: service_healthy
+
+  backend:
+    image: currency-backend:lab8
+    build:
+      context: ./лаб1
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
+    environment:
+      <<: *database
+      PORT: 3001
+      JWT_SECRET: ${JWT_SECRET:-currency-compose-local-demo-secret}
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-5000}:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: ./лаб1/лаба4
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
+        NGINX_IMAGE: ${NGINX_IMAGE:-nginx:alpine}
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_started
+
+volumes:
+  pgdata:

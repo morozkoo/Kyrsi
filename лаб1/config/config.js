@@ -2,7 +2,8 @@ require('dotenv').config();
 
 const databaseUrl = process.env.DATABASE_URL
   || 'postgres://postgres:postgres@localhost:5432/currency_converter';
-const useSsl = Boolean(process.env.DATABASE_URL)
+const useSsl = process.env.DATABASE_SSL !== 'false'
+  && Boolean(process.env.DATABASE_URL)
   && !process.env.DATABASE_URL.includes('localhost')
   && !process.env.DATABASE_URL.includes('127.0.0.1');
 const dialectOptions = useSsl
@@ -10,7 +11,7 @@ const dialectOptions = useSsl
   : {};
 
 module.exports = {
-  development: { url: databaseUrl, dialect: 'postgres', dialectOptions },
+  development: { url: databaseUrl, dialect: 'postgres', dialectOptions, seederStorage: process.env.DB_SEED_STORAGE },
   test: { url: databaseUrl, dialect: 'postgres', dialectOptions },
-  production: { url: databaseUrl, dialect: 'postgres', dialectOptions }
+  production: { url: databaseUrl, dialect: 'postgres', dialectOptions, seederStorage: process.env.DB_SEED_STORAGE }
 };
