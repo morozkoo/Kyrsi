@@ -1,3 +1,4 @@
+const { createServer } = require('node:http');
 const express = require('express');
 const cors = require('cors');
 const currencyRoutes = require('./routes/currencyRoutes');
@@ -8,17 +9,20 @@ const { authenticateToken } = require('./middleware/auth');
 const { convertCurrency } = require('./controllers/currencyController');
 const sequelize = require('./config/database');
 const { connectMongo } = require('./config/mongo');
+const attachCurrencyChat = require('./realtime/currencyChat');
 
 const app = express();
 const port = process.env.PORT || 3001;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors({
-  origin: process.env.CLIENT_ORIGIN
-    ? process.env.CLIENT_ORIGIN.split(',').map((origin) => origin.trim())
-    : '*'
-}));
+const origin = process.env.CLIENT_ORIGIN
+  ? process.env.CLIENT_ORIGIN.split(',').map((value) => value.trim())
+  : '*';
+app.use(cors({ origin }));
+
+const server = createServer(app);
+attachCurrencyChat(server, origin);
 
 app.get('/', (req, res) => {
   res.json({
@@ -50,7 +54,7 @@ connectMongo();
 
 sequelize.authenticate()
   .then(() => {
-    app.listen(port, () => {
+    server.listen(port, () => {
       console.log(`Server running on http://localhost:${port}`);
     });
   })
